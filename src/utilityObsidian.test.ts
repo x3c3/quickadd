@@ -1,8 +1,15 @@
-import type { App, TFile, WorkspaceLeaf, WorkspaceParent } from "obsidian";
+import {
+	TFolder,
+	type App,
+	type TFile,
+	type WorkspaceLeaf,
+	type WorkspaceParent,
+} from "obsidian";
 import { describe, expect, it, vi } from "vitest";
 import {
 	__test,
 	areSameVaultFilePath,
+	getAllFolderPathsInVault,
 	normalizeVaultFilePath,
 	getOpenFileOriginLeaf,
 	openFile,
@@ -34,6 +41,13 @@ function createLeaf(id: string, pinned = false): FakeLeaf {
 
 function createFile(path = "target.md"): TFile {
 	return { path } as TFile;
+}
+
+function createFolder(path: string): TFolder {
+	const folder = new TFolder();
+	folder.path = path;
+	folder.name = path.split("/").pop() ?? path;
+	return folder;
 }
 
 function setParent(leaf: FakeLeaf, parent: { id: string }): FakeLeaf {
@@ -171,6 +185,23 @@ describe("extractMarkdownLinkTarget", () => {
 
 	it("returns null for empty targets", () => {
 		expect(extractMarkdownLinkTarget("[Label]()")).toBeNull();
+	});
+});
+
+describe("getAllFolderPathsInVault", () => {
+	it("filters to folders and maps paths without sorting", () => {
+		const app = {
+			vault: {
+				getAllLoadedFiles: vi.fn(() => [
+					createFolder("B"),
+					{ path: "A/file.md" },
+					createFolder("A"),
+					createFolder("A/C"),
+				]),
+			},
+		} as unknown as App;
+
+		expect(getAllFolderPathsInVault(app)).toEqual(["B", "A", "A/C"]);
 	});
 });
 

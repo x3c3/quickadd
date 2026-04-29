@@ -23,6 +23,10 @@ import {
 	openFile,
 } from "../utilityObsidian";
 import { isCancellationError, reportError } from "../utils/errorUtils";
+import {
+	filterFolderPathsWithinRoots,
+	sortFolderPathsByTree,
+} from "../utils/folder-sorting";
 import { normalizeFileOpening } from "../utils/fileOpeningDefaults";
 import { TemplateEngine } from "./TemplateEngine";
 import { MacroAbortError } from "../errors/MacroAbortError";
@@ -314,11 +318,14 @@ export class TemplateChoiceEngine extends TemplateEngine {
 				this.choice.folder?.createInSameFolderAsActiveFile
 			)
 		) {
-			const allFoldersInVault: string[] = getAllFolderPathsInVault(this.app);
+			const allFoldersInVault: string[] = sortFolderPathsByTree(
+				getAllFolderPathsInVault(this.app),
+			);
 
-			const subfolders = allFoldersInVault.filter((folder) => {
-				return folders.some((f) => folder.startsWith(f));
-			});
+			const subfolders = filterFolderPathsWithinRoots(
+				allFoldersInVault,
+				folders,
+			);
 
 			return await this.getOrCreateFolder(subfolders, {
 				allowCreate: true,
@@ -328,7 +335,9 @@ export class TemplateChoiceEngine extends TemplateEngine {
 		}
 
 		if (this.choice.folder?.chooseWhenCreatingNote) {
-			const allFoldersInVault: string[] = getAllFolderPathsInVault(this.app);
+			const allFoldersInVault: string[] = sortFolderPathsByTree(
+				getAllFolderPathsInVault(this.app),
+			);
 			return await this.getOrCreateFolder(allFoldersInVault, {
 				allowCreate: true,
 				topItems,
