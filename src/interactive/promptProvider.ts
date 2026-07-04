@@ -34,6 +34,19 @@ export interface PromptProvider {
 		placeholder?: string,
 		allowCustomInput?: boolean,
 	): Promise<unknown>;
+	/**
+	 * Multi-select over a fixed list (`{{VALUE:a,b|multi}}`, `{{FIELD|multi}}`,
+	 * `{{FILE|multi}}`). Returns the selected `actualItems` entries in list order.
+	 */
+	suggesterMulti(
+		displayItems: string[],
+		actualItems: string[],
+		options?: {
+			placeholder?: string;
+			allowCustomInput?: boolean;
+			preselected?: string[];
+		},
+	): Promise<string[]>;
 	inputPrompt(
 		header: string,
 		placeholder?: string,
@@ -108,6 +121,61 @@ export class RemotePromptProvider implements PromptProvider {
 		}
 		// A custom-typed value (allowCustomInput) is returned verbatim.
 		return raw;
+	}
+
+	async suggesterMulti(
+		displayItems: string[],
+		actualItems: string[],
+		options?: {
+			placeholder?: string;
+			allowCustomInput?: boolean;
+			preselected?: string[];
+		},
+	): Promise<string[]> {
+		const items = actualItems.map((value, index) => ({
+			title: displayItems[index] ?? String(value),
+			value: `${SUGGESTER_INDEX_PREFIX}${index}`,
+		}));
+		// Map preselected values to wire tokens so the client pre-checks them. A
+		// preselected value the item list doesn't contain (e.g. a FIELD
+		// default-from:active value the vault scan didn't surface) is appended as a
+		// pre-checked custom item instead of being dropped - mirroring
+		// MultiSuggester, which adds such defaults as custom rows.
+		const preselected: string[] = [];
+		for (const value of options?.preselected ?? []) {
+			const index = actualItems.indexOf(value);
+			if (index >= 0) {
+				preselected.push(`${SUGGESTER_INDEX_PREFIX}${index}`);
+			} else {
+				const token = String(value);
+				items.push({ title: token, value: token });
+				preselected.push(token);
+			}
+		}
+
+		const answer = await this.server.emitPrompt(this.sessionId, {
+			type: "multiselect",
+			placeholder: options?.placeholder,
+			allowCustomInput: options?.allowCustomInput ?? false,
+			items,
+			preselected,
+		});
+		if (!Array.isArray(answer)) return [];
+		return answer.map((raw) => {
+			const value = String(raw);
+			if (value.startsWith(SUGGESTER_INDEX_PREFIX)) {
+				const index = Number(value.slice(SUGGESTER_INDEX_PREFIX.length));
+				if (
+					Number.isInteger(index) &&
+					index >= 0 &&
+					index < actualItems.length
+				) {
+					return actualItems[index];
+				}
+			}
+			// A custom-typed value (allowCustomInput) is returned verbatim.
+			return value;
+		});
 	}
 
 	async inputPrompt(

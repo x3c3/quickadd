@@ -118,4 +118,63 @@ describe("RemotePromptProvider suggester marshaling", () => {
 		const result = await provider.suggester(["a"], ["a"], undefined, true);
 		expect(result).toBe("typed custom");
 	});
+
+	it("suggesterMulti returns the selected actualItems entries and maps preselected to tokens", async () => {
+		let spec: { items: { title: string; value: string }[]; preselected: string[] } =
+			{ items: [], preselected: [] };
+		const server = {
+			emitPrompt: vi.fn(async (_id: string, s: unknown) => {
+				spec = s as typeof spec;
+				// Client selects the first and third items by their wire tokens.
+				return [spec.items[0].value, spec.items[2].value];
+			}),
+		} as unknown as ServerLike;
+		const provider = new RemotePromptProvider("s", server);
+
+		const result = await provider.suggesterMulti(
+			["A", "B", "C"],
+			["a", "b", "c"],
+			{ preselected: ["b"], placeholder: "pick" },
+		);
+
+		expect(result).toEqual(["a", "c"]);
+		// Preselected "b" (index 1) is mapped to that item's opaque token.
+		expect(spec.preselected).toEqual([spec.items[1].value]);
+		expect(spec.items[0].title).toBe("A");
+	});
+
+	it("suggesterMulti keeps a preselected value that isn't in the item list (adds it as a pre-checked custom item)", async () => {
+		let spec: { items: { title: string; value: string }[]; preselected: string[] } =
+			{ items: [], preselected: [] };
+		const server = {
+			emitPrompt: vi.fn(async (_id: string, s: unknown) => {
+				spec = s as typeof spec;
+				// Accept the defaults (return exactly what was preselected).
+				return spec.preselected;
+			}),
+		} as unknown as ServerLike;
+		const provider = new RemotePromptProvider("s", server);
+
+		// "active" is a default-from-active value not among the collected options.
+		const result = await provider.suggesterMulti(["a", "b"], ["a", "b"], {
+			preselected: ["a", "active"],
+			allowCustomInput: true,
+		});
+
+		expect(result).toEqual(["a", "active"]);
+		// "active" was appended as its own pre-checked item, not dropped.
+		expect(spec.items.map((i) => i.title)).toContain("active");
+		expect(spec.preselected).toHaveLength(2);
+	});
+
+	it("suggesterMulti keeps custom-typed values verbatim", async () => {
+		const server = {
+			emitPrompt: vi.fn(async () => ["custom-x"]),
+		} as unknown as ServerLike;
+		const provider = new RemotePromptProvider("s", server);
+		const result = await provider.suggesterMulti(["A"], ["a"], {
+			allowCustomInput: true,
+		});
+		expect(result).toEqual(["custom-x"]);
+	});
 });
