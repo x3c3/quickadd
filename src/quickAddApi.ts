@@ -222,16 +222,28 @@ export class QuickAddApi {
 
 				let collected: Record<string, string> = {};
 				if (missing.length > 0) {
-					const modal = new OnePageInputModal(
-						app,
-						missing,
-						choiceExecutor.variables,
-					);
-					try {
-						collected = await modal.waitForClose;
-					} catch (error) {
-						throwIfPromptCancelled(error);
-						throw error;
+					// Route the batch form to a remote interactive session (Raycast)
+					// when one is driving this run; otherwise open the Obsidian modal.
+					const provider = choiceExecutor?.promptProvider;
+					if (provider) {
+						try {
+							collected = await provider.requestInputs(missing);
+						} catch (error) {
+							throwIfPromptCancelled(error);
+							throw error;
+						}
+					} else {
+						const modal = new OnePageInputModal(
+							app,
+							missing,
+							choiceExecutor.variables,
+						);
+						try {
+							collected = await modal.waitForClose;
+						} catch (error) {
+							throwIfPromptCancelled(error);
+							throw error;
+						}
 					}
 				}
 
@@ -279,6 +291,8 @@ export class QuickAddApi {
 				value?: string,
 				options?: InputPromptOptions,
 			) => {
+				const provider = choiceExecutor?.promptProvider;
+				if (provider) return provider.inputPrompt(header, placeholder, value);
 				return QuickAddApi.inputPrompt(app, header, placeholder, value, options);
 			},
 			datePrompt: (
@@ -289,6 +303,8 @@ export class QuickAddApi {
 					dateFormat?: string;
 				},
 			) => {
+				const provider = choiceExecutor?.promptProvider;
+				if (provider) return provider.datePrompt(header, options);
 				return QuickAddApi.datePrompt(app, header, options);
 			},
 			wideInputPrompt: (
@@ -297,6 +313,8 @@ export class QuickAddApi {
 				value?: string,
 				options?: InputPromptOptions,
 			) => {
+				const provider = choiceExecutor?.promptProvider;
+				if (provider) return provider.wideInputPrompt(header, placeholder, value);
 				return QuickAddApi.wideInputPrompt(
 					app,
 					header,
@@ -306,9 +324,13 @@ export class QuickAddApi {
 				);
 			},
 			yesNoPrompt: (header: string, text?: string) => {
+				const provider = choiceExecutor?.promptProvider;
+				if (provider) return provider.yesNoPrompt(header, text);
 				return QuickAddApi.yesNoPrompt(app, header, text);
 			},
 			infoDialog: (header: string, text: string[] | string) => {
+				const provider = choiceExecutor?.promptProvider;
+				if (provider) return provider.infoDialog(header, text);
 				return QuickAddApi.infoDialog(app, header, text);
 			},
 			suggester: (
@@ -320,6 +342,17 @@ export class QuickAddApi {
 				allowCustomInput = false,
 				options?: { renderItem?: (value: string, el: HTMLElement) => void; },
 			) => {
+				// Route to a remote interactive session (Raycast) when one is driving
+				// this execution; otherwise open the Obsidian suggester modal.
+				const provider = choiceExecutor?.promptProvider;
+				if (provider) {
+					return provider.suggester(
+						displayItems,
+						actualItems,
+						placeholder,
+						allowCustomInput,
+					);
+				}
 				return QuickAddApi.suggester(
 					app,
 					displayItems,
@@ -334,6 +367,10 @@ export class QuickAddApi {
 				selectedItems?: string[],
 				header?: string,
 			) => {
+				const provider = choiceExecutor?.promptProvider;
+				if (provider) {
+					return provider.checkboxPrompt(items, selectedItems, header);
+				}
 				return QuickAddApi.checkboxPrompt(
 					app,
 					items,
