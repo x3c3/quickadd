@@ -24,7 +24,10 @@ import {
 	isFolder,
 } from "src/utilityObsidian";
 import { log } from "src/logger/logManager";
-import { getUserScriptPreloadKey } from "src/utils/userScript";
+import {
+	getUserScriptPreloadKey,
+	isUserScriptLoadError,
+} from "src/utils/userScript";
 import { hasTemplatePathSyntax } from "src/utils/templatePathSyntax";
 import {
 	classifyCaptureTargetScope,
@@ -471,7 +474,9 @@ async function collectMacroScriptRequirements(
 					? preloadedUserScripts?.get(cacheKey)
 					: undefined;
 			if (exported === undefined) {
-				exported = await getUserScript(userScriptCommand, app);
+				exported = await getUserScript(userScriptCommand, app, {
+					reportLoadErrors: false,
+				});
 				if (cacheKey !== undefined && exported !== undefined) {
 					preloadedUserScripts?.set(cacheKey, exported);
 				}
@@ -485,6 +490,12 @@ async function collectMacroScriptRequirements(
 			const scriptPath = userScriptCommand.path ?? userScriptCommand.id;
 			const message =
 				error instanceof Error ? error.message : String(error);
+			if (isUserScriptLoadError(error)) {
+				log.logMessage(
+					`QuickAdd preflight could not inspect user script '${scriptPath}': ${message}`,
+				);
+				continue;
+			}
 			log.logWarning(
 				`Preflight could not inspect user script '${scriptPath}': ${message}`,
 			);

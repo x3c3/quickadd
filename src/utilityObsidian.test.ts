@@ -17,6 +17,7 @@ import {
 } from "./utilityObsidian";
 import type { IUserScript } from "./types/macros/IUserScript";
 import { CommandType } from "./types/macros/CommandType";
+import { log } from "./logger/logManager";
 
 type FakeLeaf = WorkspaceLeaf & {
 	id: string;
@@ -143,6 +144,11 @@ describe("getAllFolderPathsInVault", () => {
 });
 
 describe("getUserScript", () => {
+	function noticeMessages(): string[] {
+		return (Notice as unknown as { instances: Array<{ message: string }> })
+			.instances.map((notice) => notice.message);
+	}
+
 	function createUserScriptCommand(
 		options: Partial<IUserScript> = {},
 	): IUserScript {
@@ -267,6 +273,135 @@ describe("getUserScript", () => {
 		expect((script as () => unknown)()).toBe("hi from a note");
 	});
 
+	it("explains when a .js file is a saved webpage instead of raw JavaScript", async () => {
+		const logError = vi.spyOn(log, "logError").mockImplementation(() => {});
+		const app = createUserScriptApp(
+			[
+				"<!DOCTYPE html>",
+				"<html>",
+				"<body>GitHub page, not raw JavaScript.</body>",
+				"</html>",
+			].join("\n"),
+		);
+
+		try {
+			await expect(getUserScript(createUserScriptCommand(), app)).rejects.toThrow(
+				"saved webpage",
+			);
+
+			expect(logError).toHaveBeenCalledTimes(1);
+			const reported = logError.mock.calls[0][0] as Error;
+			expect(reported.message).toContain("use the Raw button");
+			expect(reported.message).toContain("download the .js file");
+		} finally {
+			logError.mockRestore();
+		}
+	});
+
+	it("can suppress user-facing load reporting during preflight", async () => {
+		const before = noticeMessages().length;
+		const logError = vi.spyOn(log, "logError").mockImplementation(() => {});
+		const app = createUserScriptApp("<html><body>not js</body></html>");
+
+		try {
+			await expect(
+				getUserScript(createUserScriptCommand(), app, {
+					reportLoadErrors: false,
+				}),
+			).rejects.toThrow("saved webpage");
+
+			expect(noticeMessages()).toHaveLength(before);
+			expect(logError).not.toHaveBeenCalled();
+		} finally {
+			logError.mockRestore();
+		}
+	});
+
+	it("can suppress markdown script load notices during preflight", async () => {
+		const before = noticeMessages().length;
+		const app = createUserScriptApp(
+			[
+				"# Script note",
+				"",
+				"This note has no JavaScript code block.",
+			].join("\n"),
+			"Scripts/no-code-block.md",
+		);
+
+		const script = await getUserScript(
+			createUserScriptCommand({
+				path: "Scripts/no-code-block.md",
+			}),
+			app,
+			{
+				reportLoadErrors: false,
+			},
+		);
+
+		expect(script).toBeUndefined();
+		expect(noticeMessages()).toHaveLength(before);
+	});
+
+	it("explains when an explicit default export is not runnable", async () => {
+		const logError = vi.spyOn(log, "logError").mockImplementation(() => {});
+		const app = createUserScriptApp(
+			[
+				"exports.default = {",
+				"  settings: {",
+				"    apiKey: { type: 'text', defaultValue: '' },",
+				"  },",
+				"};",
+			].join("\n"),
+		);
+
+		try {
+			await expect(getUserScript(createUserScriptCommand(), app)).rejects.toThrow(
+				"default export is not a function",
+			);
+
+			expect(logError).toHaveBeenCalledTimes(1);
+			const reported = logError.mock.calls[0][0] as Error;
+			expect(reported.message).toContain("module.exports = async");
+			expect(reported.message).toContain("exports.default = async");
+		} finally {
+			logError.mockRestore();
+		}
+	});
+
+	it("explains module resolution failures while loading a script", async () => {
+		const previousRequire = (window as unknown as {
+			require?: (moduleName: string) => unknown;
+		}).require;
+		const logError = vi.spyOn(log, "logError").mockImplementation(() => {});
+		const missingModule = new Error("Cannot find module './Helper.js'");
+		(missingModule as Error & { code: string }).code = "MODULE_NOT_FOUND";
+		(window as unknown as { require?: (moduleName: string) => unknown }).require =
+			vi.fn(() => {
+				throw missingModule;
+			});
+		const app = createUserScriptApp(
+			[
+				"const helper = require('./Helper.js');",
+				"module.exports = async () => helper;",
+			].join("\n"),
+		);
+
+		try {
+			await expect(
+				getUserScript(createUserScriptCommand(), app),
+			).rejects.toThrow("could not find the required module");
+
+			expect(logError).toHaveBeenCalledTimes(1);
+			const reported = logError.mock.calls[0][0] as Error;
+			expect(reported.message).toContain("./Helper.js");
+			expect(reported.message).toContain("capitalization");
+		} finally {
+			(window as unknown as { require?: (moduleName: string) => unknown }).require =
+				previousRequire;
+			logError.mockRestore();
+		}
+	});
+
 	it("resolves ::member access for a note-based script", async () => {
 		const app = createUserScriptApp(
 			[
@@ -288,6 +423,30 @@ describe("getUserScript", () => {
 		await expect(
 			(script as (params: unknown) => unknown)({ token: "ok" }),
 		).resolves.toBe("ok");
+	});
+
+	it("preserves object exports with callable members", async () => {
+		const app = createUserScriptApp(
+			"module.exports = { run: async () => 'ok' };",
+		);
+
+		const script = await getUserScript(createUserScriptCommand(), app);
+
+		expect(script).toEqual({ run: expect.any(Function) });
+	});
+
+	it("allows explicit default object exports when member access selects a function", async () => {
+		const app = createUserScriptApp(
+			"exports.default = { run: async () => 'ok' };",
+		);
+		const command = createUserScriptCommand({
+			name: "Script::run",
+		});
+
+		const script = await getUserScript(command, app);
+
+		expect(typeof script).toBe("function");
+		await expect((script as () => unknown)()).resolves.toBe("ok");
 	});
 
 	it("returns undefined and shows a notice when a note has no ```js block", async () => {
