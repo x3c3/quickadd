@@ -28,10 +28,14 @@ async function seedFile(sandbox: SandboxApi, name: string, content: string) {
 
 /**
  * Opens the note in the active leaf, then calls the public API seam
- * `applyTemplateToActiveFile`. Results land in a window global we poll for rather
- * than reading `evalJsonAsync`'s return: template application emits `QuickAdd:`
- * notices into the eval output channel that corrupt the JSON envelope, so the
- * async work is decoupled from a clean, synchronous JSON read of the global.
+ * `applyTemplateToActiveFile`. Results land in a window global we poll for
+ * rather than awaiting `evalJsonAsync`'s return. The original reason (QuickAdd
+ * notices corrupting the JSON envelope) is fixed by obsidian-e2e >= 0.8.2's
+ * per-call envelope framing (obsidian-e2e#18) - see the A00 regression below.
+ * What remains is a transport-level flake: a long-awaited eval can stall and
+ * time out even after the in-app operation completed (artifacts show the
+ * template fully applied while the CLI response never arrived), so the
+ * long-running work stays decoupled from short, reliable JSON reads.
  */
 async function applyTemplate(
 	obsidian: ObsidianClient,
@@ -96,6 +100,24 @@ describe("apply template to active note (API seam)", () => {
 		const { sandbox } = getContext();
 		await seedFile(sandbox, "tpl-plain.md", TPL_CONTENT);
 		await seedFile(sandbox, "tpl-fm.md", TPL_FM);
+	});
+
+	it("A00: evalJsonAsync survives QuickAdd console noise on the eval channel (obsidian-e2e#18)", async () => {
+		// Focused regression for the envelope corruption this suite used to work
+		// around: emit plugin-style log lines while the evaluated code runs and
+		// read the JSON result directly. Fails on obsidian-e2e < 0.8.2 with
+		// "Unexpected token 'Q', ..." because the noise shared the eval channel.
+		const { obsidian } = getContext();
+
+		const result = await obsidian.dev.evalJsonAsync<{ ok: boolean; value: number }>(
+			`(async () => {
+				console.log("QuickAdd: (LOG) noisy plugin output during eval");
+				console.error("QuickAdd: (ERROR) more noise");
+				return { ok: true, value: 42 };
+			})()`,
+		);
+
+		expect(result).toEqual({ ok: true, value: 42 });
 	});
 
 	it("A01: empty note fast path - applies template as full content", async () => {
